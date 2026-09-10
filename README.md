@@ -29,29 +29,23 @@ The platform is built using a scalable React/TanStack Start frontend, FastAPI ba
 ## 4. Key Features
 ### Cooperative-Verified Worker Profiles
 Co-op Managers can verify and manage skilled workers associated with their cooperative societies, creating a trusted source of worker information.
-
 ### Service Discovery & Booking
 Customers can discover available skilled workers and request services through the platform.
-
 ### AI Demand Forecasting
 The platform uses worker and booking data to support AI-powered demand forecasting and help understand service requirements.
-
 ### Role-Based Access Control
 The platform provides separate access levels for:
 * Customer
 * Worker
 * Co-op Manager
 * Administrator
-
 ### Cooperative Management
 Co-op Managers remain an integral part of the platform and can manage workers and cooperative-related information.
-
 ### Digital Record-Keeping
 The platform provides structured digital records for:
 * Bookings
 * Work histories
 * Worker earnings
-
 ### Worker Management
 Workers can maintain their professional information and manage service-related activities.
 
