@@ -22,6 +22,7 @@ The system follows a role-based architecture with four major user roles:
 * Worker
 * Co-op Manager
 * Administrator
+  
 Each role receives access to the features and information required for its responsibilities.
 The platform is built using a scalable React/TanStack Start frontend, FastAPI backend, PostgreSQL database, and a Python-based AI module.
 
