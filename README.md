@@ -195,7 +195,7 @@ The platform can be expanded through a phased roadmap.
 * Cloud auto-scaling
 
 ## 13. Repository Structure
-
+'''text
 KAUSHAL-KONNECT/
 │
 ├── frontend/
