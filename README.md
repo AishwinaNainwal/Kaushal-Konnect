@@ -195,15 +195,12 @@ The platform can be expanded through a phased roadmap.
 * Cloud auto-scaling
 
 ## 13. Repository Structure
-'''text
+```text
 KAUSHAL-KONNECT/
 │
 ├── frontend/
-│
 ├── backend/
-│
 ├── ml/
-│
 ├── docs/
 │
 ├── docker-compose.yml
@@ -213,7 +210,7 @@ KAUSHAL-KONNECT/
 ├── HOW_TO_START.md
 ├── README.md
 └── guide.md
-
+```
 ### Components
 
 | Component            | Description                      |
