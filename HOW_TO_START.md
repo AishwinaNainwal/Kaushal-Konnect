@@ -24,7 +24,7 @@ If you have Docker installed, you can launch the entire environment in one comma
    docker exec -it kk_backend python migrate_data.py
    ```
 3. **Access the App**:
-   - Frontend: `http://localhost:5173`
+   - Frontend: `https://kaushal-konnect.onrender.com`
    - Backend API: `https://kaushal-konnect.onrender.com`
 
 ---

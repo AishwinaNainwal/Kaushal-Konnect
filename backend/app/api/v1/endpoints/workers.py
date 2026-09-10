@@ -5,29 +5,29 @@ from uuid import UUID
 
 from app.db.session import get_db
 from app.models import (
-    Worker,
-    User,
-    UserRole,
-    VerificationDocument,
-    WorkerSkill,
-    Service,
+Worker,
+User,
+UserRole,
+VerificationDocument,
+WorkerSkill,
+Service,
 )
 from app.schemas.worker import (
-    WorkerCreate,
-    WorkerRead,
-    WorkerProfileRead,
-    WorkerProfileUpdate,
-    AvailabilityUpdate,
-    SkillsUpdate,
-    VerificationDocumentRead,
+WorkerCreate,
+WorkerRead,
+WorkerProfileRead,
+WorkerProfileUpdate,
+AvailabilityUpdate,
+SkillsUpdate,
+VerificationDocumentRead,
 )
 from app.api.deps import get_current_user, check_role
 
 router = APIRouter()
 
-
 def build_worker_response(worker: Worker, user: User):
     """Build a response containing worker + user + skills data."""
+
     skills = [
         skill.skill_name
         for skill in worker.skills
@@ -41,8 +41,8 @@ def build_worker_response(worker: Worker, user: User):
         "worker_zone": worker.worker_zone,
         "is_verified": worker.is_verified,
         "available": worker.available,
-        "working_days": worker.working_days,
-        "slots": worker.slots,
+        "working_days": getattr(worker, "working_days", []),
+        "slots": getattr(worker, "slots", []),
         "hourly_rate": worker.hourly_rate,
         "rating": worker.rating,
         "completed_jobs": worker.completed_jobs,
@@ -59,7 +59,9 @@ def build_worker_response(worker: Worker, user: User):
 
 
 # ---------------------------------------------------------
+
 # CURRENT WORKER PROFILE
+
 # ---------------------------------------------------------
 
 @router.get("/me", response_model=WorkerProfileRead)
@@ -86,10 +88,10 @@ def read_worker_me(
         )
 
     return build_worker_response(worker, current_user)
-
-
 # ---------------------------------------------------------
+
 # UPDATE CURRENT WORKER PROFILE
+
 # ---------------------------------------------------------
 
 @router.patch("/me", response_model=WorkerProfileRead)
@@ -116,10 +118,7 @@ def update_worker_me(
             detail="Worker profile not found",
         )
 
-    # -------------------------
     # Update User fields
-    # -------------------------
-
     if update_data.full_name is not None:
         current_user.full_name = update_data.full_name
 
@@ -132,20 +131,14 @@ def update_worker_me(
     if update_data.locality is not None:
         current_user.locality = update_data.locality
 
-    # -------------------------
     # Update Worker fields
-    # -------------------------
-
     if update_data.worker_zone is not None:
         worker.worker_zone = update_data.worker_zone
 
     if update_data.hourly_rate is not None:
         worker.hourly_rate = update_data.hourly_rate
 
-    # -------------------------
     # Update service/category
-    # -------------------------
-
     if update_data.service_id is not None:
         service = (
             db.query(Service)
@@ -166,9 +159,10 @@ def update_worker_me(
 
     return build_worker_response(worker, current_user)
 
-
 # ---------------------------------------------------------
+
 # UPDATE WORKER AVAILABILITY
+
 # ---------------------------------------------------------
 
 @router.patch("/me/availability", response_model=WorkerProfileRead)
@@ -197,10 +191,13 @@ def update_worker_availability(
 
     worker.available = update_data.available
 
-    if update_data.working_days is not None:
+    if (
+        hasattr(worker, "working_days")
+        and update_data.working_days is not None
+    ):
         worker.working_days = update_data.working_days
 
-    if update_data.slots is not None:
+    if hasattr(worker, "slots") and update_data.slots is not None:
         worker.slots = update_data.slots
 
     db.commit()
@@ -210,7 +207,9 @@ def update_worker_availability(
 
 
 # ---------------------------------------------------------
+
 # UPDATE WORKER SKILLS
+
 # ---------------------------------------------------------
 
 @router.put("/me/skills", response_model=WorkerProfileRead)
@@ -237,13 +236,14 @@ def update_worker_skills(
             detail="Worker profile not found",
         )
 
-    # Clean and normalize skills
     cleaned_skills = []
+
     for skill in update_data.skills:
         skill = skill.strip()
 
         if skill and skill.lower() not in [
-            existing.lower() for existing in cleaned_skills
+            existing.lower()
+            for existing in cleaned_skills
         ]:
             cleaned_skills.append(skill)
 
@@ -268,7 +268,9 @@ def update_worker_skills(
 
 
 # ---------------------------------------------------------
+
 # CREATE WORKER PROFILE
+
 # ---------------------------------------------------------
 
 @router.post("/", response_model=WorkerRead)
@@ -277,14 +279,12 @@ def create_worker(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Only workers can create worker profiles
     if current_user.role != UserRole.worker:
         raise HTTPException(
             status_code=403,
             detail="Only workers can create a worker profile",
         )
 
-    # Never allow a worker to create a profile for another user
     if worker.user_id != current_user.id:
         raise HTTPException(
             status_code=403,
@@ -321,11 +321,19 @@ def create_worker(
     db.commit()
     db.refresh(db_worker)
 
-    return db_worker
+    user = (
+        db.query(User)
+        .filter(User.id == db_worker.user_id)
+        .first()
+    )
+
+    return build_worker_response(db_worker, user)
 
 
 # ---------------------------------------------------------
+
 # PUBLIC WORKER LIST
+
 # ---------------------------------------------------------
 
 @router.get("/", response_model=List[WorkerRead])
@@ -334,16 +342,24 @@ def read_workers(
     limit: int = 100,
     db: Session = Depends(get_db),
 ):
-    return (
-        db.query(Worker)
+    results = (
+        db.query(Worker, User)
+        .join(User, Worker.user_id == User.id)
         .offset(skip)
         .limit(limit)
         .all()
     )
 
+    return [
+        build_worker_response(worker, user)
+        for worker, user in results
+    ]
+
 
 # ---------------------------------------------------------
+
 # PUBLIC WORKER DETAIL
+
 # ---------------------------------------------------------
 
 @router.get("/{worker_id}", response_model=WorkerRead)
@@ -351,23 +367,27 @@ def read_worker(
     worker_id: str,
     db: Session = Depends(get_db),
 ):
-    worker = (
-        db.query(Worker)
+    result = (
+        db.query(Worker, User)
+        .join(User, Worker.user_id == User.id)
         .filter(Worker.id == worker_id)
         .first()
     )
 
-    if not worker:
+    if not result:
         raise HTTPException(
             status_code=404,
             detail="Worker not found",
         )
 
-    return worker
+    worker, user = result
 
+    return build_worker_response(worker, user)
 
 # ---------------------------------------------------------
+
 # VERIFY WORKER
+
 # ---------------------------------------------------------
 
 @router.patch("/{worker_id}/verify", response_model=WorkerRead)
@@ -378,28 +398,32 @@ def verify_worker(
         check_role([UserRole.admin, UserRole.coop_manager])
     ),
 ):
-    worker = (
-        db.query(Worker)
+    result = (
+        db.query(Worker, User)
+        .join(User, Worker.user_id == User.id)
         .filter(Worker.id == worker_id)
         .first()
     )
 
-    if not worker:
+    if not result:
         raise HTTPException(
             status_code=404,
             detail="Worker not found",
         )
+
+    worker, user = result
 
     worker.is_verified = True
 
     db.commit()
     db.refresh(worker)
 
-    return worker
-
+    return build_worker_response(worker, user)
 
 # ---------------------------------------------------------
+
 # WORKER DOCUMENTS
+
 # ---------------------------------------------------------
 
 @router.get(
@@ -434,7 +458,6 @@ def read_worker_documents(
         .all()
     )
 
-
 @router.post(
     "/me/documents",
     response_model=VerificationDocumentRead,
@@ -463,9 +486,7 @@ def upload_worker_document(
             detail="Worker profile not found",
         )
 
-    file_path = (
-        f"uploads/workers/{worker.id}/{file.filename}"
-    )
+    file_path = f"uploads/workers/{worker.id}/{file.filename}"
 
     doc = VerificationDocument(
         worker_id=worker.id,
@@ -511,3 +532,4 @@ def update_document_status(
     db.refresh(doc)
 
     return doc
+
