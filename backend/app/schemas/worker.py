@@ -4,6 +4,7 @@ from uuid import UUID
 from datetime import datetime
 from decimal import Decimal
 
+
 class WorkerBase(BaseModel):
     worker_zone: Optional[str] = None
     is_verified: bool = False
@@ -14,17 +15,13 @@ class WorkerBase(BaseModel):
     rating: float = Field(default=0.0, ge=0, le=5)
     completed_jobs: int = Field(default=0, ge=0)
     response_minutes: int = Field(default=0, ge=0)
-    # Geographic fields
-    latitude: Optional[Decimal] = None
-    longitude: Optional[Decimal] = None
-    home_latitude: Optional[Decimal] = None
-    home_longitude: Optional[Decimal] = None
-    service_radius_km: Optional[Decimal] = None
+
 
 class WorkerCreate(WorkerBase):
     user_id: UUID
     coop_id: UUID
     service_id: str
+
 
 class WorkerRead(WorkerBase):
     id: UUID
@@ -40,10 +37,12 @@ class WorkerRead(WorkerBase):
     class Config:
         from_attributes = True
 
+
 class WorkerProfileRead(WorkerRead):
     email: str
     phone: Optional[str] = None
     role: str
+
 
 class WorkerProfileUpdate(BaseModel):
     full_name: Optional[str] = None
@@ -53,28 +52,27 @@ class WorkerProfileUpdate(BaseModel):
     worker_zone: Optional[str] = None
     service_id: Optional[str] = None
     hourly_rate: Optional[Decimal] = Field(default=None, gt=0)
-    # New fields
-    latitude: Optional[Decimal] = None
-    longitude: Optional[Decimal] = None
-    home_latitude: Optional[Decimal] = None
-    home_longitude: Optional[Decimal] = None
-    service_radius_km: Optional[Decimal] = None
+
 
 class AvailabilityUpdate(BaseModel):
     available: bool
     working_days: Optional[List[str]] = None
     slots: Optional[List[str]] = None
 
+
 class SkillsUpdate(BaseModel):
     skills: List[str]
+
 
 class VerificationDocumentBase(BaseModel):
     document_type: str
     file_path: Optional[str] = None
     status: Optional[str] = "Pending"
 
+
 class VerificationDocumentCreate(VerificationDocumentBase):
     pass
+
 
 class VerificationDocumentRead(VerificationDocumentBase):
     id: UUID

@@ -48,7 +48,6 @@ import {
 import { getRecommendedWorkers, getUserBookings } from "@/lib/api";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { useAuth } from "@/hooks/use-auth";
-import { useLocations } from "@/hooks/useLocations";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -100,12 +99,8 @@ function CustomerDashboard() {
 }
 function DashboardContent() {
   const { user, logout } = useAuth();
-  const { locations, loading: locationsLoading } = useLocations(user?.id ?? null);
   const navigate = useNavigate();
-  const [userLocation, setUserLocation] = useState("");
-  const selectedLocation = locations.find(
-    (loc) => loc.id === userLocation
-  );
+  const [userLocation, setUserLocation] = useState("Delhi");
   const [serviceId, setServiceId] = useState("home-cleaning");
   const [sort, setSort] = useState("rating");
   const [budget, setBudget] = useState("1000");
@@ -155,43 +150,19 @@ function DashboardContent() {
       const category =
   categoryMapping[selectedServiceId] || selectedServiceId;
 
-      
-    const zone = selectedLocation?.address || "";
-
-    console.log("SEARCH:", {
-      category,
-      zone,
-      budget: parseFloat(budget) || 1000,
-    });
-
+      console.log("SEARCH:", {
+        category,
+        zone: userLocation.trim(),
+        budget: parseFloat(budget) || 1000,
+      });
+      const zone = userLocation.trim() || "South";
 
       const budgetVal = parseFloat(budget) || 1000;
-
-      if (!selectedLocation) {
-        setApiError("Please select a saved location first.");
-        setIsLoading(false);
-        return;
-      }
-
-      if (
-        selectedLocation.latitude == null ||
-        selectedLocation.longitude == null
-      ) {
-        setApiError(
-          "This saved location has no GPS coordinates. Please update it with a valid location."
-        );
-        setIsLoading(false);
-        return;
-      }
 
       const data = await getRecommendedWorkers(
         category,
         zone,
         budgetVal,
-        10,
-        selectedLocation.latitude,
-        selectedLocation.longitude,
-        10,
       );
 
       const mappedWorkers: Worker[] = data.map((w: any) => ({
@@ -201,8 +172,7 @@ function DashboardContent() {
         rating: w.rating,
         reviews: w.completed_jobs,
         pricePerHour: w.hourly_rate,
-        distanceKm:
-         w.distance_km != null ? Number(w.distance_km) : Infinity,
+        distanceKm: 0, // Not using GPS distance
         skills: [
           w.service_id || "Professional",
         ],
@@ -349,7 +319,7 @@ function DashboardContent() {
               </Label>
 
               <div className="relative">
-
+              
                 <Select value={userLocation} onValueChange={setUserLocation}>
                   <SelectTrigger
                     id="location"
@@ -358,25 +328,14 @@ function DashboardContent() {
                     <SelectValue placeholder="Choose a location" />
                   </SelectTrigger>
 
-
-                    <SelectContent>
-                      {locationsLoading ? (
-                        <SelectItem value="loading" disabled>
-                          Loading saved locations...
-                        </SelectItem>
-                      ) : locations.length > 0 ? (
-                        locations.map((loc) => (
-                          <SelectItem key={loc.id} value={loc.id}>
-                            {loc.name} — {loc.address || "Address not provided"}
-                          </SelectItem>
-                        ))
-                      ) : (
-                        <SelectItem value="no-locations" disabled>
-                          No saved locations available
-                        </SelectItem>
-                      )}
-                    </SelectContent>
-
+                  <SelectContent>
+                    <SelectItem value="Delhi">Delhi</SelectItem>
+                    <SelectItem value="Noida">Noida</SelectItem>
+                    <SelectItem value="Ghaziabad">Ghaziabad</SelectItem>
+                    <SelectItem value="Gurugram">Gurugram</SelectItem>
+                    <SelectItem value="Faridabad">Faridabad</SelectItem>
+                    <SelectItem value="Greater Noida">Greater Noida</SelectItem>
+                  </SelectContent>
                 </Select>
               </div>
             </div>
@@ -550,7 +509,7 @@ function DashboardContent() {
                 <div>
                   <h2 className="text-xl font-bold">
                     {activeService.name} near{" "}
-                    {selectedLocation?.name || "you"}
+                    {userLocation.split(",")[0] || "you"}
                   </h2>
 
                   <p className="text-sm text-muted-foreground">

@@ -135,21 +135,6 @@ def update_worker_me(
     if update_data.worker_zone is not None:
         worker.worker_zone = update_data.worker_zone
 
-    if update_data.latitude is not None:
-        worker.latitude = update_data.latitude
-
-    if update_data.longitude is not None:
-        worker.longitude = update_data.longitude
-
-    if update_data.home_latitude is not None:
-        worker.home_latitude = update_data.home_latitude
-
-    if update_data.home_longitude is not None:
-        worker.home_longitude = update_data.home_longitude
-
-    if update_data.service_radius_km is not None:
-        worker.service_radius_km = update_data.service_radius_km
-
     if update_data.hourly_rate is not None:
         worker.hourly_rate = update_data.hourly_rate
 

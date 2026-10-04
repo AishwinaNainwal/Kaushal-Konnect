@@ -1,22 +1,11 @@
-
-import math
-import pandas as pd
-from typing import Optional
 from sqlalchemy.orm import Session, joinedload
-from app.models import Worker
+import pandas as pd
+from app.models import Worker, User
 from recommender import get_recommendations
 
-
-def get_worker_recommendations(
-    db: Session,
-    category: str,
-    zone: str,
-    budget: float,
-    top_n: int,
-    user_lat: Optional[float] = None,
-    user_lon: Optional[float] = None,
-    radius_km: Optional[float] = None,
-):
+def get_worker_recommendations(db: Session, category: str, zone: str, budget: float, top_n: int):
+    # The frontend sends canonical category names like "Home Cleaning", "Plumbing", etc.
+    # The DB uses IDs like "home-cleaning", "plumbing".
     category_mapping = {
         "Home Cleaning": "home-cleaning",
         "Plumbing": "plumbing",
@@ -28,58 +17,30 @@ def get_worker_recommendations(
 
     service_id = category_mapping.get(category, category)
 
-    workers = (
-        db.query(Worker)
-        .filter(
-            Worker.service_id == service_id,
-            Worker.available.is_(True),
-        )
-        .all()
-    )
+    # Fetch relevant workers from DB to create a DataFrame for the ML model
+    # Filter by service_id, city (passed as zone), and availability
+    workers = db.query(Worker).filter(
+        Worker.service_id == service_id,
+        Worker.city == zone,
+        Worker.available == True
+    ).all()
 
     if not workers:
         return pd.DataFrame()
 
+    # Convert SQLAlchemy models to a DataFrame that the recommender expects
     worker_list = []
-
     for w in workers:
-        distance = None
-
-        if (
-            user_lat is not None
-            and user_lon is not None
-            and w.latitude is not None
-            and w.longitude is not None
-        ):
-            lat1 = math.radians(user_lat)
-            lon1 = math.radians(user_lon)
-            lat2 = math.radians(float(w.latitude))
-            lon2 = math.radians(float(w.longitude))
-
-            dlat = lat2 - lat1
-            dlon = lon2 - lon1
-
-            a = (
-                math.sin(dlat / 2) ** 2
-                + math.cos(lat1)
-                * math.cos(lat2)
-                * math.sin(dlon / 2) ** 2
-            )
-            a = max(0.0, min(1.0, a))
-            distance = 6371.0 * 2 * math.atan2(
-                math.sqrt(a), math.sqrt(1 - a)
-            )
-
         worker_list.append({
             "worker_id": str(w.id),
-            "category": w.service_id,
+            "category": w.service_id, # Mapping service_id to category for the model
             "worker_zone": w.city,
             "available": int(w.available),
-            "rating": float(w.rating or 0),
-            "weekly_gigs": 0,
-            "completed_jobs": w.completed_jobs or 0,
-            "price": float(w.hourly_rate or 0),
-            "distance_km": distance,
+            "rating": float(w.rating),
+            "weekly_gigs": 0, # This would need a real query to bookings
+            "completed_jobs": w.completed_jobs,
+            "price": float(w.hourly_rate),
+            "distance_km": 0.0, # This would need a geo-calculation
             "acceptance_rate": 0.5,
             "cancellation_rate": 0.0,
             "response_minutes": w.response_minutes,
@@ -87,31 +48,23 @@ def get_worker_recommendations(
 
     worker_df = pd.DataFrame(worker_list)
 
-    
-    # Apply radius filtering only when the customer location is available.
-    if radius_km is not None and user_lat is not None and user_lon is not None:
-        worker_df = worker_df[
-            worker_df["distance_km"].notna()
-            & (worker_df["distance_km"] <= radius_km)
-        ].copy()
-
-
-    if worker_df.empty:
-        return pd.DataFrame()
-
+    # Get the ranked worker IDs from the ML model
     ranked_df = get_recommendations(
         category=service_id,
         zone=zone,
         budget=budget,
         worker_data=worker_df,
-        top_n=top_n,
+        top_n=top_n
     )
 
     if ranked_df.empty:
-        return pd.DataFrame()
+        return ranked_df
 
-    worker_ids = ranked_df["worker_id"].astype(str).tolist()
+    # Extract the worker IDs from the ranked results
+    worker_ids = ranked_df["worker_id"].tolist()
 
+    # Fetch the full worker and user records from the DB for these IDs
+    # We use joinedload to avoid N+1 queries when accessing worker.user
     final_workers = (
         db.query(Worker)
         .options(joinedload(Worker.user))
@@ -119,22 +72,15 @@ def get_worker_recommendations(
         .all()
     )
 
+    # The ML model might have returned a specific order, so we sort the DB results to match
+    # The worker_ids list is already sorted by the ML model
     worker_map = {str(w.id): w for w in final_workers}
-    sorted_workers = [
-        worker_map[worker_id]
-        for worker_id in worker_ids
-        if worker_id in worker_map
-    ]
+    sorted_workers = [worker_map[wid] for wid in worker_ids if wid in worker_map]
 
-    distance_map = worker_df.set_index("worker_id")[
-        "distance_km"
-    ].to_dict()
-
+    # Convert to a list of dicts that match WorkerRead schema
+    # Note: We add the full_name from the associated User model
     results = []
-
     for w in sorted_workers:
-        distance = distance_map.get(str(w.id))
-
         results.append({
             "id": w.id,
             "user_id": w.user_id,
@@ -143,13 +89,6 @@ def get_worker_recommendations(
             "worker_zone": w.city,
             "city": w.city,
             "locality": w.locality,
-            "latitude": float(w.latitude) if w.latitude is not None else None,
-            "longitude": float(w.longitude) if w.longitude is not None else None,
-            "distance_km": (
-                float(distance)
-                if distance is not None and pd.notna(distance)
-                else None
-            ),
             "is_verified": w.is_verified,
             "available": w.available,
             "hourly_rate": w.hourly_rate,

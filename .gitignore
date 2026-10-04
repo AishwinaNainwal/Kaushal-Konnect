@@ -50,12 +50,3 @@ frontend/.env
 
 # Backend secrets
 backend/.env
-# Local environment files and secrets
-.env
-.env.*
-!.env.example
-
-.env.save
-frontend/.env
-frontend/.env.*
-!frontend/.env.example

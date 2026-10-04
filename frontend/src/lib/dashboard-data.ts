@@ -16,8 +16,7 @@ export type Worker = {
   distanceKm: number;
   skills: string[];
   verified: boolean;
-  latitude?: number;
-  longitude?: number;
+  jobs: number;
 };
 
 export type Booking = {

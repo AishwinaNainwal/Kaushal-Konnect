@@ -76,8 +76,6 @@ def signup(user_in: UserCreate, db: Session = Depends(get_db)):
             coop_id=cooperative.id,
             service_id=user_in.service_id,
             worker_zone=user_in.zone,
-            city=user_in.city,
-            locality=user_in.locality,
             available=True,
             hourly_rate=user_in.hourly_rate,
         )

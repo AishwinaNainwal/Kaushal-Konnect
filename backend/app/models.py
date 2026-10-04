@@ -42,8 +42,6 @@ class User(Base):
     # Relationships
     worker_profile = relationship("Worker", back_populates="user", uselist=False)
     bookings = relationship("Booking", back_populates="customer")
-    customer_locations = relationship("CustomerLocation", back_populates="user", cascade="all, delete-orphan")
-
 
 class Cooperative(Base):
     __tablename__ = "cooperatives"
@@ -53,14 +51,10 @@ class Cooperative(Base):
     location = Column(String, nullable=True)
     contact_email = Column(String, nullable=True)
     manager_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
-    latitude = Column(Numeric(precision=9, scale=6), nullable=True)
-    longitude = Column(Numeric(precision=9, scale=6), nullable=True)
-    service_radius_km = Column(Numeric(10, 2), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
     workers = relationship("Worker", back_populates="cooperative")
-
 
 class Service(Base):
     __tablename__ = "services"
@@ -72,7 +66,6 @@ class Service(Base):
 
     # Relationships
     # Removed worker_skills relationship as skill_name is not a foreign key to services.id
-
 
 class Worker(Base):
     __tablename__ = "workers"
@@ -91,14 +84,6 @@ class Worker(Base):
     completed_jobs = Column(Integer, default=0, nullable=False)
     response_minutes = Column(Integer, default=0, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
-    # Live GPS coordinates
-    latitude = Column(Numeric(precision=9, scale=6), nullable=True)
-    longitude = Column(Numeric(precision=9, scale=6), nullable=True)
-    # Home address coordinates
-    home_latitude = Column(Numeric(precision=9, scale=6), nullable=True)
-    home_longitude = Column(Numeric(precision=9, scale=6), nullable=True)
-    # Service radius in km
-    service_radius_km = Column(Numeric(10, 2), nullable=True)
 
     # Relationships
     user = relationship("User", back_populates="worker_profile")
@@ -107,20 +92,18 @@ class Worker(Base):
     bookings = relationship("Booking", back_populates="worker")
     documents = relationship("VerificationDocument", back_populates="worker")
 
-
 class VerificationDocument(Base):
     __tablename__ = "verification_documents"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     worker_id = Column(UUID(as_uuid=True), ForeignKey("workers.id"), nullable=False)
-    document_type = Column(String, nullable=False)  # e.g., "ID Proof", "Certification"
+    document_type = Column(String, nullable=False) # e.g., "ID Proof", "Certification"
     file_path = Column(String, nullable=True)
-    status = Column(String, default="Pending", nullable=False)  # "Pending", "Verified", "Rejected"
+    status = Column(String, default="Pending", nullable=False) # "Pending", "Verified", "Rejected"
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
     worker = relationship("Worker", back_populates="documents")
-
 
 class WorkerSkill(Base):
     __tablename__ = "worker_skills"
@@ -136,7 +119,6 @@ class WorkerSkill(Base):
     # If we want to link to services, we'd need service_id, but the approved schema specifically said skill_name.
     # Let's stick to the approved schema.
 
-
 class Booking(Base):
     __tablename__ = "bookings"
 
@@ -149,24 +131,13 @@ class Booking(Base):
     slot = Column(String, nullable=True)
     booking_date = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-        # Selected service location for this booking
-    customer_location_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("customer_locations.id"),
-        nullable=True
-    )
-    service_address = Column(String, nullable=True)
-    service_latitude = Column(Numeric(precision=9, scale=6), nullable=True)
-    service_longitude = Column(Numeric(precision=9, scale=6), nullable=True)
 
     # Relationships
     customer = relationship("User", back_populates="bookings")
     worker = relationship("Worker", back_populates="bookings")
-    customer_location = relationship("CustomerLocation", back_populates="bookings")
     payment = relationship("Payment", back_populates="booking", uselist=False)
     review = relationship("Review", back_populates="booking", uselist=False)
     complaint = relationship("Complaint", back_populates="booking", uselist=False)
-
 
 class Payment(Base):
     __tablename__ = "payments"
@@ -180,7 +151,6 @@ class Payment(Base):
 
     # Relationships
     booking = relationship("Booking", back_populates="payment")
-
 
 class Review(Base):
     __tablename__ = "reviews"
@@ -198,7 +168,6 @@ class Review(Base):
         CheckConstraint('rating >= 1 AND rating <= 5', name='check_review_rating'),
     )
 
-
 class Complaint(Base):
     __tablename__ = "complaints"
 
@@ -210,18 +179,3 @@ class Complaint(Base):
 
     # Relationships
     booking = relationship("Booking", back_populates="complaint")
-
-
-class CustomerLocation(Base):
-    __tablename__ = "customer_locations"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    name = Column(String, nullable=False)
-    address = Column(String, nullable=True)
-    latitude = Column(Numeric(precision=9, scale=6), nullable=True)
-    longitude = Column(Numeric(precision=9, scale=6), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    user = relationship("User", back_populates="customer_locations")
-    bookings = relationship("Booking", back_populates="customer_location")
