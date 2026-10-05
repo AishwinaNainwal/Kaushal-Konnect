@@ -20,6 +20,13 @@ class BookingRead(BookingBase):
     customer_id: UUID
     status: BookingStatus
     created_at: datetime
+    worker_name: Optional[str] = None
+    customer_name: Optional[str] = None
+    service_name: Optional[str] = None
+    payment_status: Optional[str] = None
+    review_rating: Optional[float] = None
+    review_comment: Optional[str] = None
+    complaint_status: Optional[str] = None
 
     class Config:
         from_attributes = True

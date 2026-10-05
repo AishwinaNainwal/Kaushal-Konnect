@@ -21,11 +21,15 @@ services:
     environment:
       - DATABASE_URL=postgresql+psycopg://${DB_USER:-user}:${DB_PASSWORD:-password}@db:5432/${DB_NAME:-kaushal_konnect}
       - SECRET_KEY=${SECRET_KEY:-super-secret-key}
+      - FRONTEND_URL=http://localhost
     ports:
-      - "8000:8000"
+      - "8000:10000"
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
     container_name: kk_frontend
     restart: always
     depends_on:
@@ -35,7 +39,6 @@ services:
     environment:
       - PORT=3000
       - HOST=0.0.0.0
-      - VITE_API_URL=https://kaushal-konnect.onrender.com
 
 volumes:
   postgres_data:

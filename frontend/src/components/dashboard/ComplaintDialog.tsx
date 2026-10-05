@@ -40,6 +40,7 @@ export function ComplaintDialog({
 }) {
   const [reason, setReason] = useState(reasons[0]!);
   const [details, setDetails] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!booking) return null;
 
@@ -81,15 +82,21 @@ export function ComplaintDialog({
         </div>
         <DialogFooter>
           <Button
-            onClick={() => {
-              onSubmit(booking.id, details ? `${reason} — ${details}` : reason);
-              toast.success("Complaint submitted", {
-                description: "Support will respond within 24 hours.",
-              });
-              onClose();
+            disabled={isSubmitting}
+            onClick={async () => {
+              setIsSubmitting(true);
+              try {
+                await onSubmit(booking.id, details ? `${reason} — ${details}` : reason);
+                toast.success("Complaint submitted");
+                onClose();
+              } catch (error) {
+                toast.error(error instanceof Error ? error.message : "Failed to submit complaint");
+              } finally {
+                setIsSubmitting(false);
+              }
             }}
           >
-            Submit complaint
+            {isSubmitting ? "Submitting..." : "Submit complaint"}
           </Button>
         </DialogFooter>
       </DialogContent>

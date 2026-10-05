@@ -135,6 +135,7 @@ class Booking(Base):
     # Relationships
     customer = relationship("User", back_populates="bookings")
     worker = relationship("Worker", back_populates="bookings")
+    service = relationship("Service")
     payment = relationship("Payment", back_populates="booking", uselist=False)
     review = relationship("Review", back_populates="booking", uselist=False)
     complaint = relationship("Complaint", back_populates="booking", uselist=False)

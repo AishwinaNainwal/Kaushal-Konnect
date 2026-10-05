@@ -18,11 +18,12 @@ If you have Docker installed, you can launch the entire environment in one comma
    ```bash
    docker-compose up -d --build
    ```
-2. **Initialize Database**:
-   Once the containers are running, run the migration script inside the backend container:
+2. **Initialize an empty local database**:
+   Apply the schema migrations inside the backend container:
    ```bash
-   docker exec -it kk_backend python migrate_data.py
+   docker exec -it kk_backend alembic upgrade head
    ```
+   Do not run `backend/migrate_data.py` against a database with data; it truncates application tables. Review pending migrations before upgrading any existing database.
 3. **Access the App**:
    - Frontend: `https://kaushal-konnect.onrender.com`
    - Backend API: `https://kaushal-konnect.onrender.com`
@@ -49,12 +50,13 @@ If you have Docker installed, you can launch the entire environment in one comma
    pip install -r requirements.txt
    ```
 4. **Configure Environment**:
-   - Create a `.env` file in the root directory.
-   - Add your database URL:
+    - Copy `.env.example` to `.env` in the root directory and set a strong `SECRET_KEY`.
+    - Set `DATABASE_URL` to the PostgreSQL instance used by the backend:
      ```env
      DATABASE_URL=postgresql+psycopg://USER:PASSWORD@localhost:5432/kaushal_konnect
      SECRET_KEY=your_secret_key_here
      ```
+       The backend reads this root `.env` as well as an optional `backend/.env`. Set `VITE_API_URL=http://localhost:8000` for local development.
 
 ### 2. Database Initialization
 To populate the database with initial data from CSVs:
@@ -62,9 +64,10 @@ To populate the database with initial data from CSVs:
    ```bash
    python backend/test_db.py
    ```
-2. **Run Migration**:
+2. **Apply schema migrations**:
    ```bash
-   python backend/migrate_data.py
+   cd backend
+   alembic upgrade head
    ```
 3. **Verify Migration**:
    ```bash
