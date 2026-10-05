@@ -1,744 +1,318 @@
-import { ProtectedRoute } from "@/components/ProtectedRoute";
+import { useEffect, useMemo, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { useAuth } from "@/hooks/use-auth";
-import {
-  Activity,
-  BadgeCheck,
-  Ban,
-  Check,
-  FileCheck2,
-  HeartHandshake,
-  MessageSquareWarning,
-  ShieldCheck,
-  Star,
-  TrendingUp,
-  UserPlus,
-  Users,
-  Wallet,
-  Wrench,
-  X,
-  LogOut,
-} from "lucide-react";
+import { Activity, BadgeCheck, CalendarDays, Check, FileCheck2, LogOut, MessageSquareWarning, Star, Users, Wallet } from "lucide-react";
 import { toast } from "sonner";
 
+import { ProtectedRoute } from "@/components/ProtectedRoute";
+import { useAuth } from "@/hooks/use-auth";
+import { API_BASE_URL } from "@/lib/api";
+import { currency } from "@/lib/dashboard-data";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { currency } from "@/lib/dashboard-data";
-import {
-  coopBookings,
-  coopWorkers,
-  initialCoopComplaints,
-  initialCoopServices,
-  initialVerificationRequests,
-  platformStats,
-  type CoopComplaint,
-  type CoopService,
-  type CoopWorker,
-  type VerificationRequest,
-} from "@/lib/coop-data";
+
+type WorkerRecord = {
+  id: string;
+  full_name: string;
+  service_id: string;
+  city: string | null;
+  locality: string | null;
+  is_verified: boolean;
+  available: boolean;
+  hourly_rate: number;
+  rating: number;
+  completed_jobs: number;
+  skills: string[];
+};
+type ServiceRecord = { id: string; name: string; description: string | null; base_price: number | null };
+type BookingRecord = {
+  id: string;
+  worker_id: string;
+  customer_id: string;
+  worker_name: string | null;
+  customer_name: string | null;
+  service_name: string | null;
+  status: string;
+  booking_date: string | null;
+  slot: string | null;
+  amount: number | null;
+  payment_status: string | null;
+};
+type ComplaintRecord = {
+  id: string;
+  booking_id: string;
+  customer_name: string | null;
+  worker_name: string | null;
+  service_name: string | null;
+  description: string;
+  status: string;
+  created_at: string;
+};
+type ReviewRecord = {
+  id: string;
+  booking_id: string;
+  customer_name: string | null;
+  worker_name: string | null;
+  service_name: string | null;
+  rating: number;
+  comment: string | null;
+  created_at: string;
+};
+type PaymentRecord = {
+  id: string;
+  booking_id: string;
+  amount: number;
+  status: string;
+  payment_method: string | null;
+  payment_date: string | null;
+};
+
+const serviceNames: Record<string, string> = {
+  "home-cleaning": "Home Cleaning",
+  plumbing: "Plumbing",
+  electrical: "Electrical",
+  painting: "Painting",
+  carpentry: "Carpentry",
+  "appliance-repair": "Appliance Repair",
+};
 
 export const Route = createFileRoute("/coop")({
-  head: () => ({
-    meta: [
-      { title: "Cooperative Dashboard | Kaushal Konnect" },
-      {
-        name: "description",
-        content:
-          "Register and verify workers, manage services and fair-wage ranges, monitor bookings, complaints, welfare cover, payouts and platform statistics.",
-      },
-      { property: "og:title", content: "Cooperative Dashboard | HomeHands Services" },
-      {
-        property: "og:description",
-        content:
-          "One control room for the cooperative: worker verification, fair pricing, booking oversight, complaint handling and platform analytics.",
-      },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
-    ],
-  }),
+  head: () => ({ meta: [{ title: "Cooperative Dashboard | Kaushal Konnect" }] }),
   component: CoopDashboard,
 });
 
+async function apiList<T>(path: string, token: string): Promise<T[]> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(payload?.detail || `Failed to load ${path} (${response.status})`);
+  return payload;
+}
+
 function CoopDashboard() {
-  const { user } = useAuth();
-  const [workers, setWorkers] = useState<CoopWorker[]>(coopWorkers);
-  const [requests, setRequests] = useState<VerificationRequest[]>(initialVerificationRequests);
-  const [servicesList, setServicesList] = useState<CoopService[]>(initialCoopServices);
-  const [complaints, setComplaints] = useState<CoopComplaint[]>(initialCoopComplaints);
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("All");
-  const [newWorker, setNewWorker] = useState({ name: "", service: "Home Cleaning", city: "" });
-  const [skillDraft, setSkillDraft] = useState<Record<string, string>>({});
+  const { user, token } = useAuth();
+  const [workers, setWorkers] = useState<WorkerRecord[]>([]);
+  const [services, setServices] = useState<ServiceRecord[]>([]);
+  const [bookings, setBookings] = useState<BookingRecord[]>([]);
+  const [complaints, setComplaints] = useState<ComplaintRecord[]>([]);
+  const [reviews, setReviews] = useState<ReviewRecord[]>([]);
+  const [payments, setPayments] = useState<PaymentRecord[]>([]);
+  const [query, setQuery] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
 
-  const activeWorkers = workers.filter((w) => w.status === "Active").length;
-  const totalPayouts = workers.reduce((s, w) => s + w.earnings, 0);
-  const openComplaints = complaints.filter((c) => c.status !== "Resolved").length;
-  const insuranceGaps = workers.filter((w) => w.insurance !== "Active").length;
-
-  const filtered = useMemo(
-    () =>
-      workers.filter(
-        (w) =>
-          (statusFilter === "All" || w.status === statusFilter) &&
-          (w.name.toLowerCase().includes(search.toLowerCase()) ||
-            w.service.toLowerCase().includes(search.toLowerCase())),
-      ),
-    [workers, search, statusFilter],
-  );
-
-  const registerWorker = () => {
-    if (!newWorker.name.trim()) {
-      toast.error("Add a worker name first");
-      return;
-    }
-    const id = `w${Date.now()}`;
-    setWorkers((prev) => [
-      {
-        id,
-        name: newWorker.name.trim(),
-        service: newWorker.service,
-        city: newWorker.city.trim() || "Delhi",
-        rating: 0,
-        jobs: 0,
-        hourlyRate:
-          servicesList.find((s) => s.name === newWorker.service)?.suggestedRate ?? 20,
-        status: "Pending",
-        verified: false,
-        skills: [],
-        certifications: [],
-        insurance: "Not enrolled",
-        earnings: 0,
-      },
-      ...prev,
-    ]);
-    setRequests((prev) => [
-      {
-        id: `VR-${Math.floor(900 + Math.random() * 90)}`,
-        workerName: newWorker.name.trim(),
-        service: newWorker.service,
-        document: "Government ID + address proof",
-        submitted: "2026-08-31",
-        note: "New registration — awaiting document review.",
-      },
-      ...prev,
-    ]);
-    setNewWorker({ name: "", service: newWorker.service, city: "" });
-    toast.success("Worker registered", { description: "Verification request created." });
-  };
-
-  const decideVerification = (req: VerificationRequest, approve: boolean) => {
-    setRequests((prev) => prev.filter((r) => r.id !== req.id));
-    setWorkers((prev) =>
-      prev.map((w) =>
-        w.name === req.workerName
-          ? { ...w, verified: approve, status: approve ? "Active" : w.status }
-          : w,
-      ),
-    );
-    toast[approve ? "success" : "info"](approve ? "Verification approved" : "Verification rejected", {
-      description: `${req.workerName} · ${req.document}`,
+  useEffect(() => {
+    if (!token) return;
+    let current = true;
+    setIsLoading(true);
+    void Promise.all([
+      apiList<WorkerRecord>("/workers/?limit=100", token),
+      apiList<ServiceRecord>("/services/", token),
+      apiList<BookingRecord>("/bookings/?limit=100", token),
+      apiList<ComplaintRecord>("/complaints/", token),
+      apiList<ReviewRecord>("/reviews/", token),
+      apiList<PaymentRecord>("/payments/", token),
+    ]).then(([workerRows, serviceRows, bookingRows, complaintRows, reviewRows, paymentRows]) => {
+      if (!current) return;
+      setWorkers(workerRows);
+      setServices(serviceRows);
+      setBookings(bookingRows);
+      setComplaints(complaintRows);
+      setReviews(reviewRows);
+      setPayments(paymentRows);
+      setError(null);
+    }).catch((loadError) => {
+      if (current) setError(loadError instanceof Error ? loadError.message : "Failed to load cooperative data");
+    }).finally(() => {
+      if (current) setIsLoading(false);
     });
+    return () => { current = false; };
+  }, [token]);
+
+  const pendingWorkers = workers.filter((worker) => !worker.is_verified);
+  const verifiedCount = workers.filter((worker) => worker.is_verified).length;
+  const activeCount = workers.filter((worker) => worker.is_verified && worker.available).length;
+  const openComplaints = complaints.filter((complaint) => complaint.status !== "RESOLVED").length;
+  const payoutTotal = payments.filter((payment) => payment.status === "RELEASED").reduce((total, payment) => total + Number(payment.amount), 0);
+  const averageRating = reviews.length ? (reviews.reduce((total, review) => total + Number(review.rating), 0) / reviews.length).toFixed(1) : "—";
+  const filteredWorkers = useMemo(() => workers.filter((worker) =>
+    worker.full_name.toLowerCase().includes(query.toLowerCase()) ||
+    (serviceNames[worker.service_id] ?? worker.service_id).toLowerCase().includes(query.toLowerCase())
+  ), [workers, query]);
+
+  const approveWorker = async (worker: WorkerRecord) => {
+    if (!token) return;
+    setApprovingId(worker.id);
+    try {
+      const response = await fetch(`${API_BASE_URL}/workers/${worker.id}/verify`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.detail || `Verification failed (${response.status})`);
+      if (result?.is_verified !== true) throw new Error("The API did not confirm verification.");
+      setWorkers((current) => current.map((item) => item.id === worker.id ? { ...item, ...result } : item));
+      toast.success(`${worker.full_name} verified`);
+    } catch (approveError) {
+      toast.error(approveError instanceof Error ? approveError.message : "Failed to verify worker");
+    } finally {
+      setApprovingId(null);
+    }
   };
 
-  const setWorkerStatus = (id: string, status: CoopWorker["status"]) => {
-    setWorkers((prev) => prev.map((w) => (w.id === id ? { ...w, status } : w)));
-    toast.success(`Worker ${status.toLowerCase()}`);
-  };
-
-  const addSkill = (id: string) => {
-    const value = (skillDraft[id] ?? "").trim();
-    if (!value) return;
-    setWorkers((prev) =>
-      prev.map((w) =>
-        w.id === id && !w.skills.includes(value) ? { ...w, skills: [...w.skills, value] } : w,
-      ),
-    );
-    setSkillDraft((prev) => ({ ...prev, [id]: "" }));
-    toast.success("Skill added");
-  };
-
-  const removeSkill = (id: string, skill: string) =>
-    setWorkers((prev) =>
-      prev.map((w) => (w.id === id ? { ...w, skills: w.skills.filter((s) => s !== skill) } : w)),
-    );
-
-  const updateService = (id: string, patch: Partial<CoopService>) =>
-    setServicesList((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
-
-  const advanceComplaint = (c: CoopComplaint) => {
-    const next: CoopComplaint["status"] =
-      c.status === "Open" ? "Investigating" : "Resolved";
-    setComplaints((prev) => prev.map((x) => (x.id === c.id ? { ...x, status: next } : x)));
-    toast.success(`Complaint ${c.id} → ${next}`);
+  const updateComplaint = async (complaint: ComplaintRecord, status: string) => {
+    if (!token) return;
+    try {
+      const response = await fetch(`${API_BASE_URL}/complaints/${complaint.id}/status`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.detail || `Update failed (${response.status})`);
+      setComplaints((current) => current.map((item) => item.id === complaint.id ? result : item));
+      toast.success("Complaint status updated");
+    } catch (updateError) {
+      toast.error(updateError instanceof Error ? updateError.message : "Failed to update complaint");
+    }
   };
 
   return (
-    <ProtectedRoute allowedRoles={['coop_manager', 'admin']}>
+    <ProtectedRoute allowedRoles={["coop_manager", "admin"]}>
       <main className="min-h-screen bg-background pb-20">
-      <header className="bg-gradient-navy text-navy-foreground">
-        <div className="mx-auto max-w-6xl px-5 pt-10 pb-24 sm:px-8">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <span className="grid size-10 place-items-center rounded-xl bg-gradient-gold font-display text-lg font-bold text-primary-foreground">
-                KK
-              </span>
-              <div>
-                <p className="font-display text-lg font-bold leading-none">Kaushal Konnect</p>
-                <p className="text-xs text-navy-foreground/60">Cooperative dashboard</p>
-              </div>
+        <header className="bg-gradient-navy text-navy-foreground">
+          <div className="mx-auto max-w-6xl px-5 pt-10 pb-24 sm:px-8">
+            <div className="flex items-center justify-between gap-4">
+              <div><p className="font-display text-lg font-bold">Kaushal Konnect</p><p className="text-xs text-navy-foreground/60">Cooperative dashboard</p></div>
+              {user?.role === "admin" && <Link to="/" className="text-sm hover:text-primary">Customer view</Link>}
+              <Button variant="ghost" size="sm" onClick={() => { localStorage.removeItem("auth_token"); localStorage.removeItem("auth_user"); window.location.href = "/login"; }}><LogOut className="mr-2 size-4" />Logout</Button>
             </div>
-            <div className="flex flex-wrap items-center gap-4 text-xs uppercase tracking-widest text-navy-foreground/70">
-              {user?.role === 'admin' && (
-                <>
-                  <Link to="/" className="hover:text-primary">
-                    Customer view
-                  </Link>
-                  <Link to="/worker" className="hover:text-primary">
-                    Worker view
-                  </Link>
-                </>
-              )}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-xs uppercase tracking-widest text-navy-foreground/70 hover:text-destructive"
-                onClick={() => {
-                  localStorage.removeItem('auth_token');
-                  localStorage.removeItem('auth_user');
-                  window.location.href = '/login';
-                }}
-              >
-                <LogOut className="mr-2 size-3.5" />
-                Logout
-              </Button>
-            </div>
+            <h1 className="mt-10 max-w-2xl text-4xl font-bold">Cooperative control room</h1>
+            <p className="mt-3 flex flex-wrap gap-5 text-sm text-navy-foreground/70">
+              <span><Users className="mr-1 inline size-4 text-primary" />{workers.length} workers</span>
+              <span><FileCheck2 className="mr-1 inline size-4 text-primary" />{pendingWorkers.length} pending verifications</span>
+              <span><MessageSquareWarning className="mr-1 inline size-4 text-primary" />{openComplaints} open complaints</span>
+            </p>
+          </div>
+        </header>
+
+        <div className="mx-auto -mt-16 max-w-6xl px-5 sm:px-8">
+          {error && <p role="alert" className="mb-4 rounded border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard icon={<BadgeCheck className="size-5" />} label="Verified and available" value={String(activeCount)} />
+            <StatCard icon={<FileCheck2 className="size-5" />} label="Pending verification" value={String(pendingWorkers.length)} />
+            <StatCard icon={<CalendarDays className="size-5" />} label="Open bookings" value={String(bookings.filter((booking) => ["REQUESTED", "ACCEPTED"].includes(booking.status)).length)} />
+            <StatCard icon={<Wallet className="size-5" />} label="Released payments" value={currency(payoutTotal)} />
           </div>
 
-          <h1 className="mt-10 max-w-2xl text-4xl font-bold leading-tight sm:text-5xl">
-            Cooperative control room.{" "}
-            <span className="text-primary">
-              {requests.length} verification{requests.length === 1 ? "" : "s"} waiting.
-            </span>
-          </h1>
-          <p className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-navy-foreground/70">
-            <span className="flex items-center gap-1.5">
-              <Users className="size-4 text-primary" /> {workers.length} registered workers
-            </span>
-            <span className="flex items-center gap-1.5">
-              <MessageSquareWarning className="size-4 text-primary" /> {openComplaints} open complaints
-            </span>
-            <span className="flex items-center gap-1.5">
-              <Star className="size-4 fill-primary text-primary" /> 4.72 platform rating
-            </span>
-          </p>
-        </div>
-      </header>
+          <Tabs defaultValue="workers" className="mt-10">
+            <TabsList className="flex-wrap">
+              <TabsTrigger value="workers">Workers</TabsTrigger>
+              <TabsTrigger value="verification">Verification</TabsTrigger>
+              <TabsTrigger value="services">Services</TabsTrigger>
+              <TabsTrigger value="bookings">Bookings</TabsTrigger>
+              <TabsTrigger value="complaints">Complaints</TabsTrigger>
+              <TabsTrigger value="reviews">Reviews</TabsTrigger>
+              <TabsTrigger value="welfare">Welfare & payments</TabsTrigger>
+              <TabsTrigger value="stats">Statistics</TabsTrigger>
+            </TabsList>
 
-      <div className="mx-auto -mt-16 max-w-6xl px-5 sm:px-8">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard icon={<BadgeCheck className="size-5" />} label="Active workers" value={String(activeWorkers)} />
-          <StatCard icon={<FileCheck2 className="size-5" />} label="Pending verifications" value={String(requests.length)} />
-          <StatCard icon={<Wallet className="size-5" />} label="Total payouts" value={currency(totalPayouts)} />
-          <StatCard icon={<ShieldCheck className="size-5" />} label="Insurance gaps" value={String(insuranceGaps)} />
-        </div>
-
-        <Tabs defaultValue="workers" className="mt-10">
-          <TabsList className="flex-wrap">
-            <TabsTrigger value="workers">Workers</TabsTrigger>
-            <TabsTrigger value="verification">Verification</TabsTrigger>
-            <TabsTrigger value="services">Services & pricing</TabsTrigger>
-            <TabsTrigger value="bookings">Bookings</TabsTrigger>
-            <TabsTrigger value="complaints">Complaints</TabsTrigger>
-            <TabsTrigger value="welfare">Welfare & payments</TabsTrigger>
-            <TabsTrigger value="stats">Statistics</TabsTrigger>
-          </TabsList>
-
-          {/* WORKERS */}
-          <TabsContent value="workers" className="mt-6 space-y-8">
-            <section>
-              <h2 className="text-xl font-bold">Register a worker</h2>
-              <Card className="mt-4">
-                <CardContent className="grid gap-4 p-5 sm:grid-cols-4 sm:items-end">
-                  <div className="space-y-2">
-                    <Label>Full name</Label>
-                    <Input
-                      value={newWorker.name}
-                      placeholder="e.g. Priya Nair"
-                      onChange={(e) => setNewWorker({ ...newWorker, name: e.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Service</Label>
-                    <Select
-                      value={newWorker.service}
-                      onValueChange={(v) => setNewWorker({ ...newWorker, service: v })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {servicesList.map((s) => (
-                          <SelectItem key={s.id} value={s.name}>
-                            {s.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Locality</Label>
-                    <Input
-                      value={newWorker.city}
-                      placeholder="e.g. Noida"
-                      onChange={(e) => setNewWorker({ ...newWorker, city: e.target.value })}
-                    />
-                  </div>
-                  <Button onClick={registerWorker} className="gap-2">
-                    <UserPlus className="size-4" /> Register
-                  </Button>
-                </CardContent>
-              </Card>
-            </section>
-
-            <section>
-              <div className="flex flex-wrap items-end justify-between gap-4">
-                <h2 className="text-xl font-bold">Worker roster</h2>
-                <div className="flex flex-wrap items-end gap-3">
-                  <Input
-                    className="w-48"
-                    placeholder="Search name or service"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
-                  <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger className="w-40">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {["All", "Active", "Pending", "Suspended"].map((s) => (
-                        <SelectItem key={s} value={s}>
-                          {s}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+            <TabsContent value="workers" className="mt-6 space-y-5">
+              <section>
+                <h2 className="text-xl font-bold">Worker registration</h2>
+                <p className="mt-2 text-sm text-muted-foreground">Workers create their account through Sign Up. New profiles appear here after registration.</p>
+              </section>
+              <section>
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                  <h2 className="text-xl font-bold">Worker roster</h2>
+                  <Input className="w-56" placeholder="Search name or service" value={query} onChange={(event) => setQuery(event.target.value)} />
                 </div>
-              </div>
-
-              <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                {filtered.map((w) => (
-                  <Card key={w.id} className="shadow-elevated">
-                    <CardContent className="p-5">
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="font-display font-semibold">{w.name}</p>
-                            {w.verified ? (
-                              <Badge className="gap-1 font-normal">
-                                <BadgeCheck className="size-3" /> Verified
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline" className="font-normal">
-                                Unverified
-                              </Badge>
-                            )}
-                            <Badge
-                              variant={w.status === "Suspended" ? "destructive" : "secondary"}
-                              className="font-normal"
-                            >
-                              {w.status}
-                            </Badge>
-                          </div>
-                          <p className="mt-1 text-sm text-muted-foreground">
-                            {w.service} · {w.city}
-                          </p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {w.jobs} jobs · {w.rating ? `${w.rating.toFixed(1)}★` : "no ratings"} ·{" "}
-                            {currency(w.hourlyRate)}/hr · insurance {w.insurance.toLowerCase()}
-                          </p>
-                        </div>
-                        <p className="font-display text-lg font-bold">{currency(w.earnings)}</p>
-                      </div>
-
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        {w.skills.map((s) => (
-                          <button
-                            key={s}
-                            onClick={() => removeSkill(w.id, s)}
-                            className="group inline-flex items-center gap-1 rounded-full bg-accent px-3 py-1 text-xs text-accent-foreground"
-                            title="Remove skill"
-                          >
-                            {s}
-                            <X className="size-3 opacity-50 group-hover:opacity-100" />
-                          </button>
-                        ))}
-                        {w.certifications.map((c) => (
-                          <span
-                            key={c}
-                            className="inline-flex items-center gap-1 rounded-full border border-primary/50 px-3 py-1 text-xs text-muted-foreground"
-                          >
-                            <FileCheck2 className="size-3 text-primary" /> {c}
-                          </span>
-                        ))}
-                      </div>
-
-                      <div className="mt-4 flex flex-wrap items-center gap-2">
-                        <Input
-                          className="h-9 w-40"
-                          placeholder="Add skill"
-                          value={skillDraft[w.id] ?? ""}
-                          onChange={(e) =>
-                            setSkillDraft((prev) => ({ ...prev, [w.id]: e.target.value }))
-                          }
-                          onKeyDown={(e) => e.key === "Enter" && addSkill(w.id)}
-                        />
-                        <Button size="sm" variant="secondary" onClick={() => addSkill(w.id)}>
-                          Add
-                        </Button>
-                        {w.status === "Suspended" ? (
-                          <Button size="sm" onClick={() => setWorkerStatus(w.id, "Active")}>
-                            Reinstate
-                          </Button>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="gap-1"
-                            onClick={() => setWorkerStatus(w.id, "Suspended")}
-                          >
-                            <Ban className="size-3.5" /> Suspend
-                          </Button>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-                {filtered.length === 0 && (
-                  <p className="text-sm text-muted-foreground">No workers match this filter.</p>
-                )}
-              </div>
-            </section>
-          </TabsContent>
-
-          {/* VERIFICATION */}
-          <TabsContent value="verification" className="mt-6">
-            <h2 className="text-xl font-bold">Verification requests</h2>
-            <div className="mt-4 grid gap-4 lg:grid-cols-2">
-              {requests.map((r) => (
-                <Card key={r.id} className="border-primary/40 shadow-gold">
-                  <CardContent className="p-5">
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <p className="font-display font-semibold">{r.workerName}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {r.service} · submitted {r.submitted}
-                        </p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {r.id} · {r.document}
-                        </p>
-                        {r.note && <p className="mt-2 text-sm">{r.note}</p>}
-                      </div>
-                    </div>
-                    <div className="mt-4 flex gap-2">
-                      <Button size="sm" className="gap-1" onClick={() => decideVerification(r, true)}>
-                        <Check className="size-4" /> Approve
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="gap-1"
-                        onClick={() => decideVerification(r, false)}
-                      >
-                        <X className="size-4" /> Reject
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-              {requests.length === 0 && (
-                <p className="text-sm text-muted-foreground">All verifications are cleared.</p>
-              )}
-            </div>
-          </TabsContent>
-
-          {/* SERVICES */}
-          <TabsContent value="services" className="mt-6">
-            <h2 className="text-xl font-bold">Services & fair-wage ranges</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Suggested rates guide worker pricing and keep wages above the cooperative floor.
-            </p>
-            <div className="mt-4 grid gap-4 lg:grid-cols-2">
-              {servicesList.map((s) => (
-                <Card key={s.id}>
-                  <CardContent className="p-5">
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <p className="flex items-center gap-2 font-display font-semibold">
-                          <Wrench className="size-4 text-primary" /> {s.name}
-                        </p>
-                        <p className="text-xs text-muted-foreground">{s.workers} workers listed</p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Label htmlFor={`svc-${s.id}`} className="text-xs">
-                          {s.active ? "Live" : "Paused"}
-                        </Label>
-                        <Switch
-                          id={`svc-${s.id}`}
-                          checked={s.active}
-                          onCheckedChange={(v) => {
-                            updateService(s.id, { active: v });
-                            toast.success(`${s.name} ${v ? "is live" : "paused"}`);
-                          }}
-                        />
-                      </div>
-                    </div>
-                    <div className="mt-4 grid grid-cols-3 gap-3">
-                      <RateInput
-                        label="Floor"
-                        value={s.minRate}
-                        onChange={(v) => updateService(s.id, { minRate: v })}
-                      />
-                      <RateInput
-                        label="Suggested"
-                        value={s.suggestedRate}
-                        onChange={(v) => updateService(s.id, { suggestedRate: v })}
-                      />
-                      <RateInput
-                        label="Ceiling"
-                        value={s.maxRate}
-                        onChange={(v) => updateService(s.id, { maxRate: v })}
-                      />
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </TabsContent>
-
-          {/* BOOKINGS */}
-          <TabsContent value="bookings" className="mt-6">
-            <h2 className="text-xl font-bold">Bookings & service status</h2>
-            <div className="mt-4 space-y-3">
-              {coopBookings.map((b) => (
-                <Card key={b.id}>
-                  <CardContent className="flex flex-wrap items-center justify-between gap-4 p-5">
-                    <div>
-                      <p className="font-display font-semibold">
-                        {b.service} · {b.customer}
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        {b.worker} · {b.date} · {b.slot}
-                      </p>
-                      <p className="mt-1 text-xs text-muted-foreground">{b.id}</p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Badge
-                        variant={
-                          b.status === "Cancelled"
-                            ? "destructive"
-                            : b.status === "Completed"
-                              ? "secondary"
-                              : "default"
-                        }
-                        className="font-normal"
-                      >
-                        {b.status}
-                      </Badge>
-                      <Badge variant="outline" className="font-normal">
-                        {b.payment}
-                      </Badge>
-                      <p className="font-display text-lg font-bold">{currency(b.amount)}</p>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </TabsContent>
-
-          {/* COMPLAINTS */}
-          <TabsContent value="complaints" className="mt-6">
-            <h2 className="text-xl font-bold">Customer & worker complaints</h2>
-            <div className="mt-4 grid gap-4 lg:grid-cols-2">
-              {complaints.map((c) => (
-                <Card key={c.id} className={c.status === "Resolved" ? "" : "border-primary/40"}>
-                  <CardContent className="p-5">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="secondary" className="font-normal">
-                        {c.from} complaint
-                      </Badge>
-                      <Badge
-                        variant={c.status === "Resolved" ? "outline" : "default"}
-                        className="font-normal"
-                      >
-                        {c.status}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">
-                        {c.id} · {c.opened}
-                      </span>
-                    </div>
-                    <p className="mt-3 font-display font-semibold">
-                      {c.raisedBy} → {c.against}
-                    </p>
-                    <p className="text-xs text-muted-foreground">Booking {c.bookingId}</p>
-                    <p className="mt-2 text-sm">{c.reason}</p>
-                    {c.status !== "Resolved" && (
-                      <Button size="sm" className="mt-4" onClick={() => advanceComplaint(c)}>
-                        {c.status === "Open" ? "Start investigation" : "Mark resolved"}
-                      </Button>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </TabsContent>
-
-          {/* WELFARE & PAYMENTS */}
-          <TabsContent value="welfare" className="mt-6 space-y-8">
-            <section>
-              <h2 className="text-xl font-bold">Insurance & welfare status</h2>
-              <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                {workers.map((w) => (
-                  <Card key={w.id}>
-                    <CardContent className="flex items-start gap-4 p-5">
-                      <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-accent text-accent-foreground">
-                        <HeartHandshake className="size-5" />
-                      </span>
-                      <div>
+                {isLoading ? <p className="mt-4 text-sm text-muted-foreground">Loading workers...</p> : filteredWorkers.length === 0 ? <p className="mt-4 text-sm text-muted-foreground">No workers found.</p> : (
+                  <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                    {filteredWorkers.map((worker) => (
+                      <Card key={worker.id}><CardContent className="p-5">
                         <div className="flex flex-wrap items-center gap-2">
-                          <p className="font-display font-semibold">{w.name}</p>
-                          <Badge
-                            variant={w.insurance === "Active" ? "secondary" : "destructive"}
-                            className="font-normal"
-                          >
-                            {w.insurance}
-                          </Badge>
+                          <p className="font-display font-semibold">{worker.full_name}</p>
+                          <Badge variant={worker.is_verified ? "default" : "outline"}>{worker.is_verified ? "Verified" : "Unverified"}</Badge>
+                          <Badge variant="secondary">{worker.available ? "Available" : "Unavailable"}</Badge>
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                          {w.service} · pension {w.insurance === "Active" ? "matched 2%" : "not matched"}
-                        </p>
-                        <p className="mt-2 text-sm text-muted-foreground">
-                          {w.insurance === "Active"
-                            ? "Accident cover ₹10,000 · health top-up active"
-                            : "Needs enrolment before next payout cycle."}
-                        </p>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                        <p className="mt-2 text-sm text-muted-foreground">{serviceNames[worker.service_id] ?? worker.service_id} · {[worker.locality, worker.city].filter(Boolean).join(", ") || "Location not set"}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{worker.completed_jobs} completed jobs · {Number(worker.rating).toFixed(1)} rating · {currency(Number(worker.hourly_rate))}/hr</p>
+                        {worker.skills.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{worker.skills.map((skill) => <Badge key={skill} variant="outline">{skill}</Badge>)}</div>}
+                      </CardContent></Card>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </TabsContent>
+
+            <TabsContent value="verification" className="mt-6">
+              <h2 className="text-xl font-bold">Worker verification</h2>
+              {isLoading ? <p className="mt-4 text-sm text-muted-foreground">Loading workers...</p> : pendingWorkers.length === 0 ? <p className="mt-4 text-sm text-muted-foreground">No pending workers.</p> : (
+                <div className="mt-4 grid gap-4 lg:grid-cols-2">{pendingWorkers.map((worker) => (
+                  <Card key={worker.id} className="border-primary/40"><CardContent className="p-5">
+                    <p className="font-display font-semibold">{worker.full_name}</p>
+                    <p className="text-sm text-muted-foreground">{serviceNames[worker.service_id] ?? worker.service_id} · {[worker.locality, worker.city].filter(Boolean).join(", ") || "Location not set"}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{worker.available ? "Available" : "Unavailable"}</p>
+                    <Button className="mt-4" disabled={approvingId === worker.id} onClick={() => void approveWorker(worker)}><Check className="mr-1 size-4" />{approvingId === worker.id ? "Approving..." : "Approve"}</Button>
+                  </CardContent></Card>
+                ))}</div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="services" className="mt-6">
+              <h2 className="text-xl font-bold">Services</h2>
+              {services.length === 0 ? <p className="mt-4 text-sm text-muted-foreground">No services configured.</p> : <div className="mt-4 grid gap-4 lg:grid-cols-2">{services.map((service) => (
+                <Card key={service.id}><CardContent className="p-5"><p className="font-display font-semibold">{service.name}</p><p className="mt-1 text-sm text-muted-foreground">{service.description || "No description"}</p><p className="mt-3 text-sm">Base price: {service.base_price == null ? "Not set" : currency(Number(service.base_price))}</p><p className="text-xs text-muted-foreground">{workers.filter((worker) => worker.service_id === service.id).length} worker profiles</p></CardContent></Card>
+              ))}</div>}
+            </TabsContent>
+
+            <TabsContent value="bookings" className="mt-6">
+              <h2 className="text-xl font-bold">Bookings</h2>
+              {bookings.length === 0 ? <p className="mt-4 text-sm text-muted-foreground">No bookings yet.</p> : <div className="mt-4 space-y-3">{bookings.map((booking) => (
+                <Card key={booking.id}><CardContent className="flex flex-wrap items-center justify-between gap-4 p-5"><div><p className="font-display font-semibold">{booking.service_name} · {booking.customer_name}</p><p className="text-sm text-muted-foreground">{booking.worker_name} · {booking.booking_date?.slice(0, 10)} · {booking.slot}</p><p className="mt-1 text-xs text-muted-foreground">{booking.id}</p></div><div className="flex items-center gap-3"><Badge>{booking.status}</Badge><Badge variant="outline">{booking.payment_status ?? "No payment"}</Badge><span className="font-display font-bold">{currency(Number(booking.amount ?? 0))}</span></div></CardContent></Card>
+              ))}</div>}
+            </TabsContent>
+
+            <TabsContent value="complaints" className="mt-6">
+              <h2 className="text-xl font-bold">Complaints</h2>
+              {complaints.length === 0 ? <p className="mt-4 text-sm text-muted-foreground">No complaints yet.</p> : <div className="mt-4 grid gap-4 lg:grid-cols-2">{complaints.map((complaint) => (
+                <Card key={complaint.id}><CardContent className="p-5"><div className="flex items-center gap-2"><Badge>{complaint.status}</Badge><span className="text-xs text-muted-foreground">{new Date(complaint.created_at).toLocaleDateString()}</span></div><p className="mt-3 font-medium">{complaint.customer_name ?? "Customer"} · {complaint.service_name}</p><p className="text-sm text-muted-foreground">Worker: {complaint.worker_name ?? "Unknown"} · Booking {complaint.booking_id}</p><p className="mt-2 text-sm">{complaint.description}</p>{complaint.status !== "RESOLVED" && <div className="mt-4 flex gap-2"><Button size="sm" onClick={() => void updateComplaint(complaint, complaint.status === "OPEN" ? "INVESTIGATING" : "RESOLVED")}>{complaint.status === "OPEN" ? "Investigate" : "Resolve"}</Button></div>}</CardContent></Card>
+              ))}</div>}
+            </TabsContent>
+
+            <TabsContent value="reviews" className="mt-6">
+              <h2 className="text-xl font-bold">Reviews</h2>
+              {reviews.length === 0 ? <p className="mt-4 text-sm text-muted-foreground">No reviews yet.</p> : <div className="mt-4 space-y-3">{reviews.map((review) => <Card key={review.id}><CardContent className="p-5"><p className="font-medium">{review.service_name} · {review.worker_name}</p><p className="text-sm"><Star className="mr-1 inline size-4 text-primary" />{review.rating}/5 from {review.customer_name}</p>{review.comment && <p className="mt-2 text-sm text-muted-foreground">{review.comment}</p>}</CardContent></Card>)}</div>}
+            </TabsContent>
+
+            <TabsContent value="welfare" className="mt-6 space-y-6">
+              <section><h2 className="text-xl font-bold">Welfare</h2><p className="mt-3 text-sm text-muted-foreground">Welfare and insurance records are not represented in the current database schema.</p></section>
+              <section><h2 className="text-xl font-bold">Payments</h2>{payments.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">No payment records yet.</p> : <div className="mt-4 space-y-3">{payments.map((payment) => <Card key={payment.id}><CardContent className="flex justify-between gap-4 p-4"><span>Booking {payment.booking_id} · {payment.payment_method ?? "method not set"}</span><span>{payment.status} · {currency(Number(payment.amount))}</span></CardContent></Card>)}</div>}</section>
+            </TabsContent>
+
+            <TabsContent value="stats" className="mt-6">
+              <h2 className="text-xl font-bold">Database statistics</h2>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <StatCard icon={<Users className="size-5" />} label="Worker profiles" value={String(workers.length)} />
+                <StatCard icon={<Activity className="size-5" />} label="Services" value={String(services.length)} />
+                <StatCard icon={<CalendarDays className="size-5" />} label="Bookings" value={String(bookings.length)} />
+                <StatCard icon={<MessageSquareWarning className="size-5" />} label="Complaints" value={String(complaints.length)} />
+                <StatCard icon={<Star className="size-5" />} label="Average review" value={averageRating} />
+                <StatCard icon={<Wallet className="size-5" />} label="Payment records" value={String(payments.length)} />
               </div>
-            </section>
-
-            <section>
-              <h2 className="text-xl font-bold">Payments & worker earnings</h2>
-              <div className="mt-4 space-y-3">
-                {workers.map((w) => (
-                  <Card key={w.id}>
-                    <CardContent className="flex flex-wrap items-center justify-between gap-4 p-5">
-                      <div>
-                        <p className="font-display font-semibold">{w.name}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {w.jobs} jobs · {currency(w.hourlyRate)}/hr · {w.service}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-display text-lg font-bold">{currency(w.earnings)}</p>
-                        <p className="text-xs text-muted-foreground">
-                          co-op fee {currency(w.earnings * 0.08)}
-                        </p>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            </section>
-          </TabsContent>
-
-          {/* STATS */}
-          <TabsContent value="stats" className="mt-6">
-            <h2 className="text-xl font-bold">Platform statistics</h2>
-            <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {platformStats.map((s) => (
-                <Card key={s.id} className="shadow-elevated">
-                  <CardContent className="p-5">
-                    <p className="text-xs uppercase tracking-widest text-muted-foreground">
-                      {s.label}
-                    </p>
-                    <p className="mt-2 font-display text-3xl font-bold">{s.value}</p>
-                    <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-                      <TrendingUp className="size-3.5 text-primary" /> {s.delta} vs last month
-                    </p>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-
-            <div className="mt-6 grid gap-4 sm:grid-cols-3">
-              <StatCard icon={<Users className="size-5" />} label="Registered workers" value={String(workers.length)} />
-              <StatCard icon={<Activity className="size-5" />} label="Live services" value={String(servicesList.filter((s) => s.active).length)} />
-              <StatCard icon={<MessageSquareWarning className="size-5" />} label="Open complaints" value={String(openComplaints)} />
-            </div>
-          </TabsContent>
-        </Tabs>
-      </div>
-    </main>
+            </TabsContent>
+          </Tabs>
+        </div>
+      </main>
     </ProtectedRoute>
   );
 }
 
-function RateInput({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <div className="space-y-2">
-      <Label className="text-xs uppercase tracking-widest text-muted-foreground">{label}</Label>
-      <Input
-        type="number"
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value) || 0)}
-      />
-    </div>
-  );
-}
-
-function StatCard({
-  icon,
-  label,
-  value,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-}) {
-  return (
-    <Card className="shadow-elevated">
-      <CardContent className="flex items-center gap-4 p-5">
-        <span className="grid size-11 place-items-center rounded-lg bg-accent text-accent-foreground">
-          {icon}
-        </span>
-        <div>
-          <p className="text-xs uppercase tracking-widest text-muted-foreground">{label}</p>
-          <p className="font-display text-2xl font-bold">{value}</p>
-        </div>
-      </CardContent>
-    </Card>
-  );
+function StatCard({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+  return <Card><CardContent className="flex items-center gap-4 p-5"><span className="grid size-10 place-items-center rounded bg-accent text-accent-foreground">{icon}</span><div><p className="text-xs uppercase text-muted-foreground">{label}</p><p className="font-display text-2xl font-bold">{value}</p></div></CardContent></Card>;
 }

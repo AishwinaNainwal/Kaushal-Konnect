@@ -41,11 +41,19 @@ import {
 } from "@/components/ui/sheet";
 import {
   currency,
-  services,
+  type Service,
   type Booking,
   type Worker,
 } from "@/lib/dashboard-data";
-import { getRecommendedWorkers, getUserBookings } from "@/lib/api";
+import {
+  getRecommendedWorkers,
+  getServices,
+  getWorkerLocations,
+  getUserBookings,
+  createReview,
+  createComplaint,
+  type ApiService,
+} from "@/lib/api";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -90,6 +98,49 @@ const categoryMapping: Record<string, string> = {
   "appliance-repair": "Appliance Repair",
 };
 
+const servicePresentation: Record<string, { icon: string; blurb: string }> = {
+  "home-cleaning": { icon: "Sparkles", blurb: "Deep & regular cleaning" },
+  plumbing: { icon: "Wrench", blurb: "Leaks, fittings, drainage" },
+  electrical: { icon: "Zap", blurb: "Wiring, fixtures, repairs" },
+  painting: { icon: "Paintbrush", blurb: "Interior & exterior walls" },
+  carpentry: { icon: "Hammer", blurb: "Furniture & fittings" },
+  "appliance-repair": { icon: "Refrigerator", blurb: "AC, washer, fridge" },
+};
+
+function mapService(service: ApiService): Service {
+  return {
+    id: service.id,
+    name: service.name,
+    icon: servicePresentation[service.id]?.icon ?? "Wrench",
+    from: Number(service.base_price ?? 0),
+    blurb: servicePresentation[service.id]?.blurb ?? service.description ?? "",
+  };
+}
+
+function mapBookingRecord(booking: any): Booking {
+  const slotParts = String(booking.slot ?? "").match(/(\d{1,2}:\d{2})\s*[-–—]\s*(\d{1,2}:\d{2})/);
+  const slotStart = slotParts?.[1] ?? "";
+  const slotEnd = slotParts?.[2] ?? "";
+  const startMinutes = slotStart ? Number(slotStart.slice(0, 2)) * 60 + Number(slotStart.slice(3)) : 0;
+  const endMinutes = slotEnd ? Number(slotEnd.slice(0, 2)) * 60 + Number(slotEnd.slice(3)) : 0;
+  const status = String(booking.status).toUpperCase();
+  return {
+    id: String(booking.id),
+    workerId: String(booking.worker_id),
+    workerName: booking.worker_name ?? "Worker",
+    serviceName: booking.service_name ?? booking.service_id,
+    date: booking.booking_date ? String(booking.booking_date).slice(0, 10) : "N/A",
+    slot: booking.slot ?? "N/A",
+    hours: Math.max(0, (endMinutes - startMinutes) / 60),
+    amount: Number(booking.amount) || 0,
+    status: status === "COMPLETED" ? "Completed" : status === "CANCELLED" ? "Cancelled" : status === "REJECTED" ? "Rejected" : status === "REQUESTED" ? "Requested" : "Upcoming",
+    paid: ["SUCCESS", "RELEASED"].includes(String(booking.payment_status).toUpperCase()),
+    ...(booking.review_rating == null ? {} : { rating: Number(booking.review_rating) }),
+    ...(booking.review_comment == null ? {} : { review: booking.review_comment }),
+    ...(booking.complaint_status == null ? {} : { complaint: booking.complaint_status }),
+  };
+}
+
 function CustomerDashboard() {
   return (
     <ProtectedRoute allowedRoles={['customer', 'admin']}>
@@ -100,8 +151,10 @@ function CustomerDashboard() {
 function DashboardContent() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const [userLocation, setUserLocation] = useState("Delhi");
+  const [userLocation, setUserLocation] = useState("");
   const [serviceId, setServiceId] = useState("home-cleaning");
+  const [services, setServices] = useState<Service[]>([]);
+  const [locations, setLocations] = useState<string[]>([]);
   const [sort, setSort] = useState("rating");
   const [budget, setBudget] = useState("1000");
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -111,53 +164,77 @@ function DashboardContent() {
     useState<Booking | null>(null);
   const [complaintTarget, setComplaintTarget] =
     useState<Booking | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [realWorkers, setRealWorkers] = useState<Worker[]>([]);
 
   useEffect(() => {
+    let isCurrent = true;
+    async function loadDiscoveryOptions() {
+      try {
+        const [apiServices, workerLocations] = await Promise.all([
+          getServices(),
+          getWorkerLocations(),
+        ]);
+        if (!isCurrent) return;
+        const mappedServices = apiServices.map(mapService);
+        setServices(mappedServices);
+        setLocations(workerLocations);
+        setServiceId((current) => mappedServices.some((service) => service.id === current)
+          ? current
+          : mappedServices[0]?.id ?? "");
+        setUserLocation((current) => workerLocations.includes(current)
+          ? current
+          : user?.city && workerLocations.includes(user.city)
+            ? user.city
+            : workerLocations[0] ?? "");
+      } catch (error) {
+        if (isCurrent) setApiError(error instanceof Error ? error.message : "Failed to load discovery options");
+      }
+    }
+    void loadDiscoveryOptions();
+    return () => { isCurrent = false; };
+  }, [user?.city]);
+
+  useEffect(() => {
+    let isCurrent = true;
     async function fetchHistory() {
       try {
         const data = await getUserBookings();
-        // Map API response to frontend Booking type
-        const mapped = data.map((b: any) => ({
-          id: b.id,
-          customer: user?.full_name || "Me",
-          serviceName: b.service_id, // Mapping service_id to serviceName for now
-          date: b.booking_date ? b.booking_date.split('T')[0] : 'N/A',
-          slot: b.slot || 'N/A',
-          hours: 2, // Mocking hours as they are not in current DB model
-          amount: Number(b.amount) || 0,
-          status: b.status === 'COMPLETED' ? 'Completed' : 'Upcoming',
-          paid: true,
-        }));
-        setBookings(mapped);
+        if (isCurrent) setBookings(data.map(mapBookingRecord));
       } catch (e) {
         console.error("Failed to fetch bookings:", e);
       }
     }
-    fetchHistory();
-  }, [user]);
+    void fetchHistory();
+    return () => { isCurrent = false; };
+  }, [user?.id]);
 
-  const [realWorkers, setRealWorkers] = useState<Worker[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [apiError, setApiError] = useState<string | null>(null);
+  const activeService = services.find((s) => s.id === serviceId) ?? services[0];
 
-  const activeService = services.find((s) => s.id === serviceId)!;
-
-  const handleSearch = async (selectedServiceId = serviceId) => {
+  const handleSearch = async (
+    selectedServiceId = serviceId,
+    selectedLocation = userLocation,
+    selectedBudget = budget,
+  ) => {
     setIsLoading(true);
     setApiError(null);
 
     try {
+      if (!selectedServiceId || !selectedLocation.trim()) {
+        throw new Error("Choose a service and location before searching.");
+      }
       const category =
   categoryMapping[selectedServiceId] || selectedServiceId;
 
       console.log("SEARCH:", {
         category,
-        zone: userLocation.trim(),
-        budget: parseFloat(budget) || 1000,
+        zone: selectedLocation.trim(),
+        budget: parseFloat(selectedBudget) || 1000,
       });
-      const zone = userLocation.trim() || "South";
+      const zone = selectedLocation.trim();
 
-      const budgetVal = parseFloat(budget) || 1000;
+      const budgetVal = parseFloat(selectedBudget) || 1000;
 
       const data = await getRecommendedWorkers(
         category,
@@ -168,14 +245,11 @@ function DashboardContent() {
       const mappedWorkers: Worker[] = data.map((w: any) => ({
         id: String(w.id),
         name: w.full_name || "Unknown Professional",
-        serviceId: selectedServiceId,
+        serviceId: String(w.service_id),
         rating: w.rating,
         reviews: w.completed_jobs,
         pricePerHour: w.hourly_rate,
-        distanceKm: 0, // Not using GPS distance
-        skills: [
-          w.service_id || "Professional",
-        ],
+        skills: [services.find((service) => service.id === w.service_id)?.name || w.service_id || "Professional"],
         verified: w.is_verified,
         jobs: w.completed_jobs,
         // Adding these to the Worker type mapping internally
@@ -202,15 +276,11 @@ function DashboardContent() {
           return a.pricePerHour - b.pricePerHour;
         }
 
-        if (sort === "distance") {
-          return a.distanceKm - b.distanceKm;
-        }
-
         return b.rating - a.rating;
       });
     }
 
-    // Fallback to mock data if no search has been performed
+    // No search results are shown until the API returns matching workers.
     return [];
   }, [serviceId, sort, realWorkers]);
 
@@ -320,7 +390,10 @@ function DashboardContent() {
 
               <div className="relative">
               
-                <Select value={userLocation} onValueChange={setUserLocation}>
+                <Select value={userLocation} onValueChange={(value) => {
+                  setUserLocation(value);
+                  void handleSearch(serviceId, value);
+                }}>
                   <SelectTrigger
                     id="location"
                     className="border-navy-foreground/15 bg-navy-foreground/5 text-navy-foreground"
@@ -329,12 +402,7 @@ function DashboardContent() {
                   </SelectTrigger>
 
                   <SelectContent>
-                    <SelectItem value="Delhi">Delhi</SelectItem>
-                    <SelectItem value="Noida">Noida</SelectItem>
-                    <SelectItem value="Ghaziabad">Ghaziabad</SelectItem>
-                    <SelectItem value="Gurugram">Gurugram</SelectItem>
-                    <SelectItem value="Faridabad">Faridabad</SelectItem>
-                    <SelectItem value="Greater Noida">Greater Noida</SelectItem>
+                    {locations.map((location) => <SelectItem key={location} value={location}>{location}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -354,6 +422,7 @@ function DashboardContent() {
                   setServiceId(value);
                   setRealWorkers([]);
                   setApiError(null);
+                  void handleSearch(value);
                 }}
               >
                 <SelectTrigger
@@ -507,8 +576,8 @@ function DashboardContent() {
             <section>
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
-                  <h2 className="text-xl font-bold">
-                    {activeService.name} near{" "}
+                      <h2 className="text-xl font-bold">
+                        {activeService?.name ?? "Workers"} near{" "}
                     {userLocation.split(",")[0] || "you"}
                   </h2>
 
@@ -539,9 +608,6 @@ function DashboardContent() {
                         Lowest price
                       </SelectItem>
 
-                      <SelectItem value="distance">
-                        Nearest first
-                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -635,7 +701,7 @@ function DashboardContent() {
                   !isLoading && (
                     <p className="text-sm text-muted-foreground">
                       No workers match that search for{" "}
-                      {activeService.name}.
+                      {activeService?.name ?? "this service"}.
                     </p>
                   )}
               </div>
@@ -707,31 +773,16 @@ function DashboardContent() {
                     </div>
 
                     <div className="flex flex-wrap gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() =>
-                          setReviewTarget(b)
-                        }
-                      >
-                        <Star className="mr-1 size-4" />
-
-                        {b.rating
-                          ? "Edit review"
-                          : "Rate & review"}
-                      </Button>
-
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() =>
-                          setComplaintTarget(b)
-                        }
-                      >
-                        <MessageSquareWarning className="mr-1 size-4" />
-
-                        Raise complaint
-                      </Button>
+                      {b.status === "Completed" && !b.rating && (
+                        <Button variant="outline" size="sm" onClick={() => setReviewTarget(b)}>
+                          <Star className="mr-1 size-4" /> Rate & review
+                        </Button>
+                      )}
+                      {!b.complaint && b.status !== "Cancelled" && b.status !== "Rejected" && (
+                        <Button variant="outline" size="sm" onClick={() => setComplaintTarget(b)}>
+                          <MessageSquareWarning className="mr-1 size-4" /> Raise complaint
+                        </Button>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -743,40 +794,28 @@ function DashboardContent() {
 
       <BookingFlow
         worker={bookingWorker}
-        serviceName={activeService.name}
+        serviceName={activeService?.name ?? "Service"}
         location={userLocation}
         onClose={() => setBookingWorker(null)}
-        onConfirm={(b) =>
-          setBookings((prev) => [...prev, b])
-        }
+        onConfirm={async () => setBookings((await getUserBookings()).map(mapBookingRecord))}
       />
 
       <ReviewDialog
         booking={reviewTarget}
         onClose={() => setReviewTarget(null)}
-        onSubmit={(id, rating, review) =>
-          setBookings((prev) =>
-            prev.map((b) =>
-              b.id === id
-                ? { ...b, rating, review }
-                : b,
-            ),
-          )
-        }
+        onSubmit={async (id, rating, review) => {
+          await createReview({ booking_id: id, rating, comment: review });
+          setBookings((await getUserBookings()).map(mapBookingRecord));
+        }}
       />
 
       <ComplaintDialog
         booking={complaintTarget}
         onClose={() => setComplaintTarget(null)}
-        onSubmit={(id, complaint) =>
-          setBookings((prev) =>
-            prev.map((b) =>
-              b.id === id
-                ? { ...b, complaint }
-                : b,
-            ),
-          )
-        }
+        onSubmit={async (id, complaint) => {
+          await createComplaint({ booking_id: id, description: complaint });
+          setBookings((await getUserBookings()).map(mapBookingRecord));
+        }}
       />
     </main>
   );

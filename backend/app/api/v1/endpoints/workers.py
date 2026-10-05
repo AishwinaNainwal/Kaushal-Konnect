@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import List
 from uuid import UUID
 
@@ -48,8 +49,8 @@ def build_worker_response(worker: Worker, user: User):
         "completed_jobs": worker.completed_jobs,
         "response_minutes": worker.response_minutes,
         "full_name": user.full_name,
-        "city": user.city,
-        "locality": user.locality,
+        "city": worker.city or user.city,
+        "locality": worker.locality or user.locality,
         "skills": skills,
         "created_at": worker.created_at,
         "email": user.email,
@@ -127,9 +128,11 @@ def update_worker_me(
 
     if update_data.city is not None:
         current_user.city = update_data.city
+        worker.city = update_data.city
 
     if update_data.locality is not None:
         current_user.locality = update_data.locality
+        worker.locality = update_data.locality
 
     # Update Worker fields
     if update_data.worker_zone is not None:
@@ -354,6 +357,21 @@ def read_workers(
         build_worker_response(worker, user)
         for worker, user in results
     ]
+
+
+@router.get("/locations")
+def read_worker_locations(db: Session = Depends(get_db)):
+    rows = (
+        db.query(
+            func.coalesce(Worker.city, User.city).label("city"),
+            func.coalesce(Worker.locality, User.locality).label("locality"),
+        )
+        .join(User, Worker.user_id == User.id)
+        .filter(Worker.is_verified.is_(True), Worker.available.is_(True))
+        .all()
+    )
+    locations = sorted({row.city for row in rows if row.city})
+    return locations
 
 
 # ---------------------------------------------------------

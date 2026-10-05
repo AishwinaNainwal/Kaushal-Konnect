@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.v1.endpoints import workers, bookings, recommendations, auth
+from app.api.v1.endpoints import workers, bookings, recommendations, auth, services, reviews, complaints, payments
 
 
 app = FastAPI(
@@ -73,6 +73,11 @@ app.include_router(
     prefix="/recommendations",
     tags=["Recommendations"]
 )
+
+app.include_router(services.router, prefix="/services", tags=["Services"])
+app.include_router(reviews.router, prefix="/reviews", tags=["Reviews"])
+app.include_router(complaints.router, prefix="/complaints", tags=["Complaints"])
+app.include_router(payments.router, prefix="/payments", tags=["Payments"])
 
 
 @app.get("/")

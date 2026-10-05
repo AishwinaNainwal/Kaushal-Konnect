@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { CalendarDays, Clock, CreditCard, ShieldCheck, Star } from "lucide-react";
+import { useEffect, useState } from "react";
+import { CalendarDays, Clock, CreditCard, Star } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -21,8 +21,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { currency, timeSlots, type Booking, type Worker } from "@/lib/dashboard-data";
-import { createBooking } from "@/lib/api";
+import { currency, type Booking, type Worker } from "@/lib/dashboard-data";
+import { createBooking, getWorkerAvailability, type ApiAvailabilitySlot } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 
 type Props = {
@@ -30,30 +30,71 @@ type Props = {
   serviceName: string;
   location: string;
   onClose: () => void;
-  onConfirm: (booking: Booking) => void;
+  onConfirm: () => void | Promise<void>;
 };
 
-const today = new Date().toISOString().slice(0, 10);
+const formatDate = (value: Date) => {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const today = formatDate(new Date());
 
 export function BookingFlow({ worker, serviceName, location, onClose, onConfirm }: Props) {
   const { user } = useAuth();
   const [step, setStep] = useState<"schedule" | "payment">("schedule");
   const [date, setDate] = useState(today);
-  const [slot, setSlot] = useState(timeSlots[1]!);
-  const [hours, setHours] = useState("2");
+  const [slot, setSlot] = useState("");
   const [method, setMethod] = useState("card");
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingSlots, setIsLoadingSlots] = useState(false);
+  const [availableSlots, setAvailableSlots] = useState<ApiAvailabilitySlot[]>([]);
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!worker) return;
+    let isCurrent = true;
+    setAvailableSlots([]);
+    setSlot("");
+    setIsLoadingSlots(true);
+    setAvailabilityError(null);
+    getWorkerAvailability(worker.id, date)
+      .then((slots) => {
+        if (!isCurrent) return;
+        setAvailableSlots(slots);
+        setSlot((current) => slots.some((item) => item.slot === current && item.available)
+          ? current
+          : slots.find((item) => item.available)?.slot ?? "");
+      })
+      .catch((error) => {
+        if (isCurrent) {
+          setAvailableSlots([]);
+          setAvailabilityError(error instanceof Error ? error.message : "Failed to load availability");
+        }
+      })
+      .finally(() => {
+        if (isCurrent) setIsLoadingSlots(false);
+      });
+    return () => { isCurrent = false; };
+  }, [worker?.id, date]);
 
   if (!worker) return null;
 
-  const qty = Number(hours);
+  const selectedAvailability = availableSlots.find((item) => item.slot === slot);
+  const slotTimes = slot.match(/(\d{1,2}:\d{2})\s*[-–—]\s*(\d{1,2}:\d{2})/);
+  const slotStart = slotTimes?.[1] ?? "";
+  const slotEnd = slotTimes?.[2] ?? "";
+  const qty = slotStart && slotEnd
+    ? (Number(slotEnd.slice(0, 2)) * 60 + Number(slotEnd.slice(3)) - Number(slotStart.slice(0, 2)) * 60 - Number(slotStart.slice(3))) / 60
+    : 0;
   const subtotal = worker.pricePerHour * qty;
   const fee = Math.round(subtotal * 0.08 * 100) / 100;
   const total = subtotal + fee;
 
   const reset = () => {
     setStep("schedule");
-    setHours("2");
     setMethod("card");
   };
 
@@ -65,31 +106,20 @@ export function BookingFlow({ worker, serviceName, location, onClose, onConfirm 
 
     setIsLoading(true);
     try {
-      const bookingData = {
-  worker_id: worker.id,
-  service_id: worker.serviceId,
-  amount: total,
-  slot,
-  booking_date: new Date(`${date}T${slot.slice(0, 5)}:00`).toISOString(),
-  payment_method: method,
-};
-
-      const result = await createBooking(bookingData);
-
-      onConfirm({
-        id: result.id,
-        workerId: worker.id,
-        workerName: worker.name,
-        serviceName,
-        date,
+      if (!selectedAvailability?.available) {
+        throw new Error("This time slot is no longer available. Please select another time.");
+      }
+      await createBooking({
+        worker_id: worker.id,
+        service_id: worker.serviceId,
+        amount: total,
         slot,
-        hours: qty,
-        amount: result.amount || worker.pricePerHour * qty,
-        status: "Upcoming",
-        paid: true,
+        booking_date: `${date}T${slot.slice(0, 5)}:00`,
+        payment_method: method,
       });
+      await onConfirm();
 
-      toast.success("Payment successful", {
+      toast.success("Booking request sent", {
         description: `${worker.name} is booked for ${date}, ${slot}.`,
       });
       reset();
@@ -140,34 +170,25 @@ export function BookingFlow({ worker, serviceName, location, onClose, onConfirm 
               <Label className="flex items-center gap-2">
                 <Clock className="size-4 text-primary" /> Time slot
               </Label>
+              {availabilityError && <p role="alert" className="text-sm text-destructive">{availabilityError}</p>}
               <div className="grid grid-cols-2 gap-2">
-                {timeSlots.map((s) => (
+                {availableSlots.map(({ slot: s, available }) => (
                   <Button
                     key={s}
                     type="button"
                     variant={slot === s ? "default" : "outline"}
                     className="justify-center"
+                    disabled={!available || isLoadingSlots}
                     onClick={() => setSlot(s)}
                   >
-                    {s}
+                    {s}{available ? "" : " · Unavailable"}
                   </Button>
                 ))}
+                {isLoadingSlots && <p className="col-span-2 text-sm text-muted-foreground">Checking availability...</p>}
+                {!isLoadingSlots && !availabilityError && availableSlots.length === 0 && (
+                  <p className="col-span-2 text-sm text-muted-foreground">No time slots are available for this date.</p>
+                )}
               </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Duration</Label>
-              <Select value={hours} onValueChange={setHours}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {[1, 2, 3, 4, 5, 6].map((h) => (
-                    <SelectItem key={h} value={String(h)}>
-                      {h} hour{h > 1 ? "s" : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
             </div>
           </div>
         ) : (
@@ -182,7 +203,7 @@ export function BookingFlow({ worker, serviceName, location, onClose, onConfirm 
             </div>
             <div className="space-y-2">
               <Label className="flex items-center gap-2">
-                <CreditCard className="size-4 text-primary" /> Payment method
+                <CreditCard className="size-4 text-primary" /> Payment preference
               </Label>
               <Select value={method} onValueChange={setMethod}>
                 <SelectTrigger>
@@ -195,16 +216,13 @@ export function BookingFlow({ worker, serviceName, location, onClose, onConfirm 
                 </SelectContent>
               </Select>
             </div>
-            <p className="flex items-center gap-2 text-xs text-muted-foreground">
-              <ShieldCheck className="size-4 text-primary" /> Payment is held securely
-              and released after the job is marked complete.
-            </p>
+            <p className="text-xs text-muted-foreground">Local development does not charge payments; payment remains pending.</p>
           </div>
         )}
 
         <DialogFooter>
           {step === "schedule" ? (
-            <Button onClick={() => setStep("payment")}>
+            <Button onClick={() => setStep("payment")} disabled={!selectedAvailability?.available || isLoadingSlots}>
               Continue · {currency(subtotal)}
             </Button>
           ) : (
@@ -213,7 +231,7 @@ export function BookingFlow({ worker, serviceName, location, onClose, onConfirm 
                 Back
               </Button>
               <Button onClick={pay} disabled={isLoading}>
-                {isLoading ? "Processing..." : `Pay ${currency(total)}`}
+                {isLoading ? "Submitting..." : "Confirm booking"}
               </Button>
             </>
           )}
@@ -243,6 +261,7 @@ export function ReviewDialog({
 }) {
   const [rating, setRating] = useState(5);
   const [review, setReview] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!booking) return null;
 
@@ -275,13 +294,21 @@ export function ReviewDialog({
         />
         <DialogFooter>
           <Button
-            onClick={() => {
-              onSubmit(booking.id, rating, review);
-              toast.success("Thanks for the review!");
-              onClose();
+            disabled={isSubmitting}
+            onClick={async () => {
+              setIsSubmitting(true);
+              try {
+                await onSubmit(booking.id, rating, review);
+                toast.success("Thanks for the review!");
+                onClose();
+              } catch (error) {
+                toast.error(error instanceof Error ? error.message : "Failed to submit review");
+              } finally {
+                setIsSubmitting(false);
+              }
             }}
           >
-            Submit review
+            {isSubmitting ? "Submitting..." : "Submit review"}
           </Button>
         </DialogFooter>
       </DialogContent>
